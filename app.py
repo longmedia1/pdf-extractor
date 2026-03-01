@@ -5,44 +5,51 @@ import os
 
 app = Flask(__name__)
 
-# Endpoint raíz (para Render / wake-up)
-@app.get("/")
-def root():
-    return "ok", 200
-
-# Healthcheck (útil para n8n)
-@app.get("/health")
+# ---------- HEALTH CHECK (IMPORTANTE PARA RENDER) ----------
+@app.route("/health", methods=["GET"])
 def health():
-    return "ok", 200
+    return jsonify({"status": "ok"}), 200
 
-# Endpoint principal: extraer texto del PDF
-@app.post("/extract-pdf")
+
+# ---------- EXTRAER TEXTO + TABLAS ----------
+@app.route("/extract", methods=["POST"])
 def extract_pdf():
     if "file" not in request.files:
-        return jsonify({
-            "error": "No file field. Use form-data with key 'file'"
-        }), 400
+        return jsonify({"error": "No file provided"}), 400
 
-    file = request.files["file"]
+    pdf_file = request.files["file"]
 
-    # Guardar PDF temporalmente
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-        file.save(tmp.name)
-        path = tmp.name
+        pdf_file.save(tmp.name)
+        tmp_path = tmp.name
 
-    text_parts = []
+    text_pages = []
+    tables = []
 
     try:
-        with pdfplumber.open(path) as pdf:
-            for page in pdf.pages:
-                text = page.extract_text()
-                if text:
-                    text_parts.append(text)
-    finally:
-        os.remove(path)
+        with pdfplumber.open(tmp_path) as pdf:
+            for page_num, page in enumerate(pdf.pages, start=1):
+                text_pages.append({
+                    "page": page_num,
+                    "text": page.extract_text()
+                })
 
-    full_text = "\n".join(text_parts)
+                page_tables = page.extract_tables()
+                for table in page_tables:
+                    tables.append({
+                        "page": page_num,
+                        "rows": table
+                    })
+
+    finally:
+        os.remove(tmp_path)
 
     return jsonify({
-        "text": full_text
+        "pages": text_pages,
+        "tables": tables
     })
+    
+
+# ---------- ENTRYPOINT ----------
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=10000)
